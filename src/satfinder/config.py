@@ -12,16 +12,6 @@ from pathlib import Path
 # =============================================================================
 
 CITIES = {
-    "vienna": {
-        "name": "Vienna",
-        "img_w": 5888,
-        "img_h": 7168,
-        "grid_w": 368,
-        "grid_h": 448,
-        "dzi_url": "/static/tiles/scene.dzi",
-        "embeddings_file": "vienna_embeddings.npz",
-        "map_file": "vienna.jpg",
-    },
     "graz": {
         "name": "Graz",
         "img_w": 6656,
