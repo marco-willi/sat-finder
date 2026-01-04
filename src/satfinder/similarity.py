@@ -11,6 +11,8 @@ from torchvision import transforms
 
 from .config import (
     ASSETS_DIR,
+    CITIES,
+    DEFAULT_CITY,
     NEGATIVE_WEIGHT,
 )
 
@@ -64,16 +66,14 @@ def load_embeddings(city: str = "vienna") -> np.ndarray:
         Embeddings array of shape (GRID_H, GRID_W, embedding_dim).
         Returns zeros if embeddings file not found.
     """
-    from .config import CITIES
-
     if city in _embeddings_cache:
         return _embeddings_cache[city]
 
     city_config = CITIES.get(city)
     if not city_config:
-        print(f"Warning: unknown city '{city}', using vienna")
-        city = "vienna"
-        city_config = CITIES["vienna"]
+        print(f"Warning: unknown city '{city}', using {DEFAULT_CITY}")
+        city = DEFAULT_CITY
+        city_config = CITIES[DEFAULT_CITY]
 
     emb_path = ASSETS_DIR / city_config["embeddings_file"]
     if emb_path.exists():
@@ -89,7 +89,7 @@ def load_embeddings(city: str = "vienna") -> np.ndarray:
         return np.zeros((grid_h, grid_w, 1024), dtype=np.float32)
 
 
-def pixel_to_token(x: float, y: float, city: str = "vienna") -> tuple[int, int]:
+def pixel_to_token(x: float, y: float, city: str = DEFAULT_CITY) -> tuple[int, int]:
     """Convert pixel coordinates to token grid indices.
 
     Args:
@@ -100,9 +100,7 @@ def pixel_to_token(x: float, y: float, city: str = "vienna") -> tuple[int, int]:
     Returns:
         Tuple of (token_x, token_y) indices, clamped to valid range.
     """
-    from .config import CITIES
-
-    city_config = CITIES.get(city, CITIES["vienna"])
+    city_config = CITIES.get(city, CITIES[DEFAULT_CITY])
     img_w = city_config["img_w"]
     img_h = city_config["img_h"]
     grid_w = city_config["grid_w"]
@@ -116,7 +114,7 @@ def pixel_to_token(x: float, y: float, city: str = "vienna") -> tuple[int, int]:
     return token_x, token_y
 
 
-def compute_similarity(points: list[dict], city: str = "vienna") -> np.ndarray:
+def compute_similarity(points: list[dict], city: str = DEFAULT_CITY) -> np.ndarray:
     """Compute similarity map given a list of positive/negative points.
 
     Uses cosine similarity between query embedding(s) and all patch embeddings.
@@ -129,9 +127,7 @@ def compute_similarity(points: list[dict], city: str = "vienna") -> np.ndarray:
     Returns:
         Similarity map as (GRID_H, GRID_W) float array in [0, 1]
     """
-    from .config import CITIES
-
-    city_config = CITIES.get(city, CITIES["vienna"])
+    city_config = CITIES.get(city, CITIES[DEFAULT_CITY])
     grid_w = city_config["grid_w"]
     grid_h = city_config["grid_h"]
 

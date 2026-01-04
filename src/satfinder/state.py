@@ -5,7 +5,7 @@ Provides event handlers that work with Gradio's state system.
 
 import json
 
-from .config import CITIES
+from .config import CITIES, DEFAULT_CITY
 from .similarity import compute_similarity, pixel_to_token
 from .visualization import similarity_to_heatmap_base64
 
@@ -44,7 +44,7 @@ def add_point(
         return points_json, f"Invalid click: {click_xy}"
 
     # Get city dimensions
-    city_config = CITIES.get(city, CITIES["vienna"])
+    city_config = CITIES.get(city, CITIES[DEFAULT_CITY])
     img_w = city_config["img_w"]
     img_h = city_config["img_h"]
 
@@ -140,4 +140,4 @@ def get_city_config(city: str) -> dict:
     Returns:
         City configuration dict with img_w, img_h, grid_w, grid_h, dzi_url
     """
-    return CITIES.get(city, CITIES["vienna"])
+    return CITIES.get(city, CITIES[DEFAULT_CITY])
