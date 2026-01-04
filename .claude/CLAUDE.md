@@ -109,6 +109,46 @@ pytest                     # Run tests
 
 **Note**: OpenSeadragon is automatically downloaded during devcontainer setup (see `.devcontainer/post-create.sh`).
 
+## Deployment (Dual Remote Setup)
+
+The project uses two git remotes with different content:
+
+| Remote | URL | Content |
+|--------|-----|---------|
+| `origin` | github.com/marco-willi/sat-finder | Full repo (Vienna + Graz) |
+| `hf` | huggingface.co/spaces/marco-willi/sat-finder | Graz only (1GB limit) |
+
+### Why Dual Remotes?
+
+HF Spaces free tier has a **1GB storage limit**. Vienna data (~627MB embeddings + tiles) exceeds this when combined with Graz (~684MB). So HF only gets Graz data.
+
+### Push Workflow
+
+**For normal changes (code only):**
+```bash
+git add -A && git commit -m "message" && git push origin main
+# Then cherry-pick to HF:
+git checkout -b hf-update hf/main
+git cherry-pick main --strategy-option theirs
+git push hf hf-update:main --force
+git checkout main && git branch -D hf-update
+```
+
+**Why cherry-pick?** The two remotes have diverged histories (different initial commits). Direct push fails because GitHub's main includes Vienna files that HF can't accept.
+
+### Files Excluded from HF (via .hfignore)
+- `archive/` - Old code
+- `notebooks/` - Development notebooks
+- `scripts/` - Data download scripts
+- `docs/` - Documentation images
+- `config/` - Model configs
+- `data/` - Raw data cache
+- `logs/` - Log files
+- `.devcontainer/` - Dev environment
+
+### Adding Vienna to HF (requires paid tier)
+If you upgrade HF storage, add Vienna back to `CITIES` in `config.py` and push the Vienna files.
+
 
 ## Gradio App Features
 
