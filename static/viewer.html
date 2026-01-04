@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        #viewer-wrapper {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            background: #1a1a2e;
+        }
+
+        #osd-viewer {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #heatmap-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0.6;
+        }
+
+        #overlay-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 20;
+        }
+    </style>
+    <script src="/static/js/openseadragon.min.js"></script>
+</head>
+
+<body>
+    <div id="viewer-wrapper">
+        <div id="osd-viewer"></div>
+        <canvas id="heatmap-canvas"></canvas>
+        <canvas id="overlay-canvas"></canvas>
+    </div>
+
+    <script>
+        (function () {
+            // =================================================================
+            // Configuration - read from parent or use defaults
+            // =================================================================
+            function getConfig() {
+                try {
+                    if (window.parent && window.parent.SATFINDER_CONFIG) {
+                        return window.parent.SATFINDER_CONFIG;
+                    }
+                } catch (e) {
+                    console.warn('[viewer] Could not read parent config:', e);
+                }
+                // Fallback defaults
+                return {
+                    IMG_W: 5888,
+                    IMG_H: 7168,
+                    GRID_W: 368,
+                    GRID_H: 448,
+                    MIN_GRID_SPACING: 12,
+                    GRID_OPACITY: 0.25,
+                    DEFAULT_HEATMAP_OPACITY: 0.6,
+                    DZI_URL: "/static/tiles/scene.dzi"
+                };
+            }
+
+            let CONFIG = getConfig();
+            let IMG_W = CONFIG.IMG_W;
+            let IMG_H = CONFIG.IMG_H;
+            let GRID_W = CONFIG.GRID_W;
+            let GRID_H = CONFIG.GRID_H;
+            const MIN_GRID_SPACING = CONFIG.MIN_GRID_SPACING;
+            const GRID_OPACITY = CONFIG.GRID_OPACITY;
+            let DZI_URL = CONFIG.DZI_URL;
+
+            // =================================================================
+            // State
+            // =================================================================
+            let viewer = null;
+            let overlayCanvas, overlayCtx, heatmapCanvas, heatmapCtx;
+            let heatmapImage = null;
+            // Read initial state from parent if available
+            let showGrid = true;  // Will be updated from parent on init
+            let showHeatmap = true;
+            let heatmapOpacity = CONFIG.DEFAULT_HEATMAP_OPACITY;
+            let pointsData = [];
+
+            // =================================================================
+            // Initialization
+            // =================================================================
+            function init() {
+                console.log('[viewer] Initializing with config:', CONFIG);
+
+                if (typeof OpenSeadragon !== 'function') {
+                    console.error('[viewer] OpenSeadragon not loaded!');
+                    return;
+                }
+
+                const osdElement = document.getElementById('osd-viewer');
+
+                viewer = OpenSeadragon({
+                    element: osdElement,
+                    tileSources: DZI_URL,
+                    prefixUrl: "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/",
+                    showNavigator: true,
+                    navigatorPosition: "BOTTOM_RIGHT",
+                    navigatorSizeRatio: 0.15,
+                    minZoomLevel: 0.1,
+                    maxZoomLevel: 10,
+                    visibilityRatio: 0.5,
+                    constrainDuringPan: false,
+                    animationTime: 0.3,
+                    showZoomControl: true,
+                    showHomeControl: true,
+                    showFullPageControl: false,
+                    debugMode: false,
+                    gestureSettingsMouse: {
+                        clickToZoom: false,
+                        dblClickToZoom: true,
+                        pinchToZoom: true,
+                        flickEnabled: true,
+                    },
+                    gestureSettingsTouch: {
+                        clickToZoom: false,
+                        dblClickToZoom: true,
+                        pinchToZoom: true,
+                        flickEnabled: true,
+                    },
+                });
+
+                overlayCanvas = document.getElementById('overlay-canvas');
+                overlayCtx = overlayCanvas.getContext('2d');
+                heatmapCanvas = document.getElementById('heatmap-canvas');
+                heatmapCtx = heatmapCanvas.getContext('2d');
+
+                // Error handlers
+                viewer.addHandler('open-failed', function (e) {
+                    console.error('[viewer] open-failed:', e.message, e);
+                });
+                viewer.addHandler('tile-load-failed', function (e) {
+                    console.error('[viewer] tile-load-failed:', e);
+                });
+
+                // Success handler
+                viewer.addHandler('open', function () {
+                    console.log('[viewer] Image opened successfully');
+                    onResize();
+                    redraw();
+                });
+
+                // Redraw on viewport changes
+                viewer.addHandler('viewport-change', redraw);
+                viewer.addHandler('animation', redraw);
+                viewer.addHandler('animation-finish', redraw);
+                viewer.addHandler('resize', onResize);
+
+                // Click handler
+                viewer.addHandler('canvas-click', handleClick);
+
+                // Set up parent communication
+                setupParentCommunication();
+
+                console.log('[viewer] Setup complete');
+            }
+
+            // =================================================================
+            // Click Handling
+            // =================================================================
+            function handleClick(event) {
+                if (!event.quick) return;
+
+                const vpPoint = viewer.viewport.pointFromPixel(event.position);
+                const imgPoint = viewer.viewport.viewportToImageCoordinates(vpPoint);
+                const x = Math.max(0, Math.min(IMG_W - 1, imgPoint.x));
+                const y = Math.max(0, Math.min(IMG_H - 1, imgPoint.y));
+
+                console.log('[viewer] Click at image coords:', x.toFixed(1), y.toFixed(1));
+
+                // Write to parent's textbox
+                const newValue = x.toFixed(1) + ',' + y.toFixed(1);
+                try {
+                    const parent = window.parent;
+                    if (parent && parent !== window && parent.document) {
+                        const clickBox = parent.document.querySelector('#click_xy input, #click_xy textarea');
+                        if (clickBox) {
+                            const proto = clickBox.tagName === 'TEXTAREA'
+                                ? HTMLTextAreaElement.prototype
+                                : HTMLInputElement.prototype;
+                            const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+                            if (descriptor && descriptor.set) {
+                                descriptor.set.call(clickBox, newValue);
+                            } else {
+                                clickBox.value = newValue;
+                            }
+                            clickBox.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    }
+                } catch (e) {
+                    console.error('[viewer] Error accessing parent:', e);
+                }
+
+                // Also send via postMessage as backup
+                window.parent.postMessage({ type: 'click', x: x, y: y }, '*');
+            }
+
+            // =================================================================
+            // Parent Communication
+            // =================================================================
+            function setupParentCommunication() {
+                // Listen for messages from parent
+                window.addEventListener('message', function (event) {
+                    const data = event.data;
+                    if (!data || !data.type) return;
+
+                    if (data.type === 'points') {
+                        pointsData = data.points || [];
+                        redraw();
+                    } else if (data.type === 'heatmap') {
+                        loadHeatmap(data.base64);
+                    } else if (data.type === 'showGrid') {
+                        showGrid = data.value;
+                        redraw();
+                    } else if (data.type === 'showHeatmap') {
+                        showHeatmap = data.value;
+                        redraw();
+                    } else if (data.type === 'download') {
+                        downloadCurrentView();
+                    }
+                });
+
+                // Poll parent state (for Gradio compatibility)
+                let lastPointsVal = '[]';
+                let lastHeatmapVal = '';
+                let lastGridVal = 'true';
+                let lastHeatmapToggleVal = 'true';
+                let lastOpacityVal = String(CONFIG.DEFAULT_HEATMAP_OPACITY);
+                let lastCityConfigVal = '';
+
+                function pollParentState() {
+                    // City config change (must check first as it resets other state)
+                    const cityConfigVal = getParentTextboxValue('city_config');
+                    if (cityConfigVal !== null && cityConfigVal !== '' && cityConfigVal !== lastCityConfigVal) {
+                        lastCityConfigVal = cityConfigVal;
+                        try {
+                            const newConfig = JSON.parse(cityConfigVal);
+                            if (newConfig.DZI_URL && newConfig.DZI_URL !== DZI_URL) {
+                                console.log('[viewer] City changed, reloading tiles:', newConfig);
+                                switchCity(newConfig);
+                                // Reset other state
+                                lastPointsVal = '[]';
+                                lastHeatmapVal = '';
+                                pointsData = [];
+                                heatmapImage = null;
+                            }
+                        } catch (e) {
+                            console.error('[viewer] Failed to parse city config:', e);
+                        }
+                    }
+
+                    // Points
+                    const pointsVal = getParentTextboxValue('points_json');
+                    if (pointsVal !== null && pointsVal !== lastPointsVal) {
+                        lastPointsVal = pointsVal;
+                        try {
+                            pointsData = JSON.parse(pointsVal) || [];
+                        } catch (e) {
+                            pointsData = [];
+                        }
+                        redraw();
+                    }
+
+                    // Heatmap data
+                    const heatmapVal = getParentTextboxValue('heatmap_data');
+                    if (heatmapVal !== null && heatmapVal !== lastHeatmapVal) {
+                        lastHeatmapVal = heatmapVal;
+                        loadHeatmap(heatmapVal);
+                    }
+
+                    // Grid toggle
+                    const gridVal = getParentTextboxValue('grid_toggle');
+                    if (gridVal !== null && gridVal !== lastGridVal) {
+                        lastGridVal = gridVal;
+                        const newShowGrid = gridVal === 'true';
+                        if (newShowGrid !== showGrid) {
+                            showGrid = newShowGrid;
+                            redraw();
+                        }
+                    }
+
+                    // Heatmap toggle
+                    const heatmapToggleVal = getParentTextboxValue('heatmap_toggle');
+                    if (heatmapToggleVal !== null && heatmapToggleVal !== lastHeatmapToggleVal) {
+                        lastHeatmapToggleVal = heatmapToggleVal;
+                        const newShowHeatmap = heatmapToggleVal === 'true';
+                        if (newShowHeatmap !== showHeatmap) {
+                            showHeatmap = newShowHeatmap;
+                            redraw();
+                        }
+                    }
+
+                    // Opacity
+                    const opacityVal = getParentTextboxValue('heatmap_opacity');
+                    if (opacityVal !== null && opacityVal !== lastOpacityVal) {
+                        lastOpacityVal = opacityVal;
+                        const newOpacity = parseFloat(opacityVal);
+                        if (!isNaN(newOpacity) && newOpacity !== heatmapOpacity) {
+                            heatmapOpacity = newOpacity;
+                            redraw();
+                        }
+                    }
+                }
+
+                // Read initial state immediately
+                function readInitialState() {
+                    const gridVal = getParentTextboxValue('grid_toggle');
+                    if (gridVal !== null) {
+                        showGrid = gridVal === 'true';
+                        console.log('[viewer] Initial grid state:', showGrid);
+                    }
+
+                    const cityConfigVal = getParentTextboxValue('city_config');
+                    if (cityConfigVal && cityConfigVal !== '') {
+                        try {
+                            const config = JSON.parse(cityConfigVal);
+                            if (config.DZI_URL && config.DZI_URL !== DZI_URL) {
+                                console.log('[viewer] Initial city config:', config);
+                                switchCity(config);
+                            }
+                        } catch (e) {
+                            console.warn('[viewer] Could not parse initial city config:', e);
+                        }
+                    }
+                }
+
+                // Read initial state after a short delay to ensure parent is ready
+                setTimeout(readInitialState, 100);
+
+                console.log('[viewer] Setting up polling with setInterval');
+                setInterval(pollParentState, 200);
+                setTimeout(pollParentState, 500);
+            }
+
+            function switchCity(newConfig) {
+                // Update global config
+                IMG_W = newConfig.IMG_W;
+                IMG_H = newConfig.IMG_H;
+                GRID_W = newConfig.GRID_W;
+                GRID_H = newConfig.GRID_H;
+                DZI_URL = newConfig.DZI_URL;
+
+                // Clear heatmap
+                heatmapImage = null;
+                pointsData = [];
+
+                // Reload viewer with new tiles
+                if (viewer) {
+                    viewer.open(DZI_URL);
+                }
+            }
+
+            function getParentTextboxValue(elemId) {
+                try {
+                    const parent = window.parent;
+                    if (!parent || parent === window || !parent.document) return null;
+                    const box = parent.document.querySelector('#' + elemId + ' input, #' + elemId + ' textarea');
+                    return box ? box.value : null;
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            function loadHeatmap(base64) {
+                if (!base64) {
+                    heatmapImage = null;
+                    redraw();
+                    return;
+                }
+                const img = new Image();
+                img.onload = function () {
+                    heatmapImage = img;
+                    redraw();
+                };
+                img.onerror = function () {
+                    console.error('[viewer] Failed to load heatmap image');
+                };
+                img.src = 'data:image/png;base64,' + base64;
+            }
+
+            // =================================================================
+            // Drawing
+            // =================================================================
+            function onResize() {
+                if (!viewer || !viewer.container) return;
+                const rect = viewer.container.getBoundingClientRect();
+                overlayCanvas.width = rect.width;
+                overlayCanvas.height = rect.height;
+                heatmapCanvas.width = rect.width;
+                heatmapCanvas.height = rect.height;
+                redraw();
+            }
+
+            function redraw() {
+                if (!viewer || !viewer.viewport || !viewer.world.getItemCount()) return;
+
+                overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                heatmapCtx.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
+
+                if (showHeatmap && heatmapImage) drawHeatmap();
+                if (showGrid) drawGrid();
+                drawPoints();
+            }
+
+            function drawGrid() {
+                const tiledImage = viewer.world.getItemAt(0);
+                if (!tiledImage) return;
+
+                const dx = IMG_W / GRID_W;
+                const dy = IMG_H / GRID_H;
+
+                // Get visible bounds, clamped to image
+                const viewportBounds = viewer.viewport.getBounds(true);
+                const rawTopLeft = viewer.viewport.viewportToImageCoordinates(viewportBounds.x, viewportBounds.y);
+                const rawBottomRight = viewer.viewport.viewportToImageCoordinates(
+                    viewportBounds.x + viewportBounds.width,
+                    viewportBounds.y + viewportBounds.height
+                );
+
+                const topLeft = {
+                    x: Math.max(0, rawTopLeft.x),
+                    y: Math.max(0, rawTopLeft.y)
+                };
+                const bottomRight = {
+                    x: Math.min(IMG_W, rawBottomRight.x),
+                    y: Math.min(IMG_H, rawBottomRight.y)
+                };
+
+                // Fixed step - always show every grid line (true DINO patch boundaries)
+                const stepX = 1;
+                const stepY = 1;
+
+                const startTX = Math.max(0, Math.floor(topLeft.x / dx));
+                const endTX = Math.min(GRID_W, Math.ceil(bottomRight.x / dx));
+                const startTY = Math.max(0, Math.floor(topLeft.y / dy));
+                const endTY = Math.min(GRID_H, Math.ceil(bottomRight.y / dy));
+
+                overlayCtx.strokeStyle = 'rgba(255, 255, 255, ' + GRID_OPACITY + ')';
+                overlayCtx.lineWidth = 1;
+
+                // Vertical lines
+                for (let tx = startTX; tx <= endTX; tx += stepX) {
+                    const imgX = tx * dx;
+                    const yStart = Math.max(0, topLeft.y);
+                    const yEnd = Math.min(IMG_H, bottomRight.y);
+                    const screenStart = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(imgX, yStart));
+                    const screenEnd = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(imgX, yEnd));
+                    overlayCtx.beginPath();
+                    overlayCtx.moveTo(screenStart.x, screenStart.y);
+                    overlayCtx.lineTo(screenEnd.x, screenEnd.y);
+                    overlayCtx.stroke();
+                }
+
+                // Horizontal lines
+                for (let ty = startTY; ty <= endTY; ty += stepY) {
+                    const imgY = ty * dy;
+                    const xStart = Math.max(0, topLeft.x);
+                    const xEnd = Math.min(IMG_W, bottomRight.x);
+                    const screenStart = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(xStart, imgY));
+                    const screenEnd = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(xEnd, imgY));
+                    overlayCtx.beginPath();
+                    overlayCtx.moveTo(screenStart.x, screenStart.y);
+                    overlayCtx.lineTo(screenEnd.x, screenEnd.y);
+                    overlayCtx.stroke();
+                }
+            }
+
+            function drawPoints() {
+                for (const p of pointsData) {
+                    const screenPt = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(p.x, p.y));
+                    const isPos = p.label !== 'neg';
+                    const color = isPos ? '#22c55e' : '#ef4444';
+
+                    overlayCtx.beginPath();
+                    overlayCtx.arc(screenPt.x, screenPt.y, 8, 0, 2 * Math.PI);
+                    overlayCtx.fillStyle = color;
+                    overlayCtx.fill();
+                    overlayCtx.strokeStyle = 'white';
+                    overlayCtx.lineWidth = 2;
+                    overlayCtx.stroke();
+
+                    overlayCtx.fillStyle = 'white';
+                    overlayCtx.font = 'bold 12px sans-serif';
+                    overlayCtx.textAlign = 'center';
+                    overlayCtx.textBaseline = 'middle';
+                    overlayCtx.fillText(isPos ? '+' : '-', screenPt.x, screenPt.y);
+                }
+            }
+
+            function drawHeatmap() {
+                if (!heatmapImage) return;
+                const tiledImage = viewer.world.getItemAt(0);
+                if (!tiledImage) return;
+
+                heatmapCanvas.style.opacity = heatmapOpacity;
+
+                const topLeft = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(0, 0));
+                const bottomRight = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(IMG_W, IMG_H));
+
+                const w = bottomRight.x - topLeft.x;
+                const h = bottomRight.y - topLeft.y;
+
+                if (w > 0 && h > 0) {
+                    heatmapCtx.drawImage(heatmapImage, topLeft.x, topLeft.y, w, h);
+                }
+            }
+
+            // =================================================================
+            // Download functionality
+            // =================================================================
+            function downloadCurrentView() {
+                if (!viewer) {
+                    console.error('[viewer] Cannot download - viewer is null');
+                    return;
+                }
+
+                if (!viewer.world || !viewer.world.getItemCount()) {
+                    console.error('[viewer] Cannot download - no tiles loaded');
+                    return;
+                }
+
+                try {
+                    // Create a composite canvas with all layers
+                    const compositeCanvas = document.createElement('canvas');
+                    compositeCanvas.width = overlayCanvas.width;
+                    compositeCanvas.height = overlayCanvas.height;
+                    const compositeCtx = compositeCanvas.getContext('2d');
+
+                    // Draw the base map (from OSD's current view)
+                    let osdCanvas = null;
+                    if (viewer.drawer && viewer.drawer.canvas) {
+                        osdCanvas = viewer.drawer.canvas;
+                    } else if (viewer.canvas) {
+                        osdCanvas = viewer.canvas;
+                    } else {
+                        const canvases = viewer.container.querySelectorAll('canvas');
+                        if (canvases.length > 0) {
+                            osdCanvas = canvases[0];
+                        }
+                    }
+
+                    if (osdCanvas) {
+                        compositeCtx.drawImage(osdCanvas, 0, 0);
+                    } else {
+                        console.warn('[viewer] Could not find OSD canvas');
+                    }
+
+                    // Draw heatmap layer if visible
+                    if (showHeatmap && heatmapImage) {
+                        compositeCtx.globalAlpha = heatmapOpacity;
+                        compositeCtx.drawImage(heatmapCanvas, 0, 0);
+                        compositeCtx.globalAlpha = 1.0;
+                    }
+
+                    // Draw overlay layer (grid and points)
+                    compositeCtx.drawImage(overlayCanvas, 0, 0);
+
+                    // Convert to blob and download
+                    compositeCanvas.toBlob(function(blob) {
+                        if (!blob) {
+                            console.error('[viewer] Failed to create blob');
+                            return;
+                        }
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                        a.download = `satfinder-view-${timestamp}.png`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }, 'image/png');
+                } catch (e) {
+                    console.error('[viewer] Download failed:', e);
+                }
+            }
+
+            // =================================================================
+            // Start
+            // =================================================================
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+            } else {
+                init();
+            }
+        })();
+    </script>
+</body>
+
+</html>

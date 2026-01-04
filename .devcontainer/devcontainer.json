@@ -1,0 +1,78 @@
+{
+  "name": "Sat-Finder",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  // Workspace configuration
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "workspaceFolder": "/workspace",
+  // Configure VS Code
+  "customizations": {
+    "vscode": {
+      "settings": {
+        // Python settings
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "python.terminal.activateEnvInCurrentTerminal": true,
+        // Jupyter settings
+        "jupyter.jupyterServerType": "local",
+        "jupyter.notebookFileRoot": "${workspaceFolder}",
+        // Editor settings
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.organizeImports": "explicit"
+        },
+        // Terminal settings
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "charliermarsh.ruff",
+        "ms-vscode.makefile-tools",
+        "tamasfe.even-better-toml",
+        "anthropic.claude-code"
+      ]
+    }
+  },
+  // Container environment
+  "remoteEnv": {
+    "HF_HOME": "/workspace/data/HF_CACHE",
+    "WANDB_DIR": "/workspace/logs",
+    "SSH_AUTH_SOCK": "/ssh-agent"
+  },
+  // Lifecycle scripts
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+  // Forward ports
+  "forwardPorts": [
+    7860,
+    8887,
+    6007
+  ],
+  "portsAttributes": {
+    "7860": {
+      "label": "Gradio",
+      "onAutoForward": "notify"
+    },
+    "8887": {
+      "label": "JupyterLab",
+      "onAutoForward": "notify"
+    },
+    "6007": {
+      "label": "TensorBoard",
+      "onAutoForward": "ignore"
+    }
+  },
+  // GPU support - requires NVIDIA Container Toolkit
+  "runArgs": [
+    "--gpus=all",
+    "--shm-size=12g"
+  ],
+  // Persistent SSH keys in named volume (survives rebuilds)
+  "mounts": [
+    "source=devcontainer-ssh,target=/root/.ssh,type=volume"
+  ]
+}

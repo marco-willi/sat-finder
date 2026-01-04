@@ -1,0 +1,9 @@
+# DevContainer specific
+.venv/
+.cache/
+.jupyter/
+.ipython/
+.local/
+
+# But keep the devcontainer config
+!.devcontainer/

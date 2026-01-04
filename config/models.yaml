@@ -1,0 +1,61 @@
+# Model Registry
+#
+# All models are registered here with a unified interface.
+# Each model defines:
+#   - type: Model type (unet, dino)
+#   - For DINO: timm_name, feature_dim, patch_size
+#   - For U-Net: features list
+#
+# Normalization is automatically loaded from timm model config for DINO models.
+# U-Net models use simple [0,1] scaling (no normalization).
+#
+# Usage in config:
+#   model:
+#     backbone: unet_base  # or dinov3_sat_large, etc.
+
+# Normalization presets (fallback if timm config unavailable)
+normalization_presets:
+  imagenet:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  satellite:
+    mean: [0.4300, 0.4110, 0.2960]
+    std: [0.2130, 0.1560, 0.1430]
+
+backbones:
+  dinov3_small:
+    type: dino
+    timm_name: vit_small_patch14_reg4_dinov3
+    feature_dim: 384
+    patch_size: 14
+    normalization: imagenet
+
+  dinov3_base:
+    type: dino
+    timm_name: vit_base_patch14_reg4_dinov3
+    feature_dim: 768
+    patch_size: 14
+    normalization: imagenet
+
+  dinov3_large:
+    type: dino
+    timm_name: vit_large_patch14_reg4_dinov3
+    feature_dim: 1024
+    patch_size: 14
+    normalization: imagenet
+
+  dinov3_giant:
+    type: dino
+    timm_name: vit_giant_patch14_reg4_dinov3
+    feature_dim: 1536
+    patch_size: 14
+    normalization: imagenet
+
+  # Satellite-finetuned DINOv3 (recommended for remote sensing)
+  # See: https://huggingface.co/timm/vit_large_patch16_dinov3.sat493m
+  dinov3_sat_large:
+    type: dino
+    timm_name: vit_large_patch16_dinov3.sat493m
+    feature_dim: 1024
+    patch_size: 16
+    normalization: satellite

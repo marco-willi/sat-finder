@@ -1,0 +1,12 @@
+# Ignore tiles by default (large files)
+tiles/
+
+# But track essential static files
+!.gitignore
+!viewer.html
+!js/
+!js/**
+
+# Track Graz tiles (for HF Spaces)
+!tiles_graz/
+!tiles_graz/**

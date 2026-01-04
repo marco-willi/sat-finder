@@ -1,0 +1,17 @@
+# Development directories not needed for HF Spaces deployment
+archive/
+notebooks/
+scripts/
+docs/
+config/
+data/
+logs/
+.devcontainer/
+
+# Development files
+Makefile
+.pre-commit-config.yaml
+.gitignore
+
+# Git internals
+.git/
